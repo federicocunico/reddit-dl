@@ -3,11 +3,8 @@ from reddit_comment_analyzer import RedditCommentAnalyzer
 
 
 def main():
-    
-    # Get comments from Reddit
-    reddit = RedditWrapper(client_id, client_secret, "TestApp/1.0 by u/federicocunico")
 
-    threads = reddit.search_subreddit_threads(
+    threads = reddit_api.search_subreddit_threads(
         subreddit_name="psicologia",
         query="",  # Empty for all posts
         limit=15,
@@ -29,7 +26,7 @@ def main():
 
     target_thread = threads[0]
     thread_id = target_thread['id']
-    comments = reddit.get_thread_comments(thread_id)
+    comments = reddit_api.get_thread_comments(thread_id)
     
     # remove moderator comments
     comments = [c for c in comments if not c['author'].startswith('AutoModerator')]
