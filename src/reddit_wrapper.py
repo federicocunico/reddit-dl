@@ -1,65 +1,62 @@
 import praw
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import time
-from functools import wraps
+import json
+
 
 class RedditWrapper:
     """
     Simple but effective Reddit API wrapper using PRAW with rate limiting
     """
-    
-    def __init__(self, client_id: str, client_secret: str, user_agent: str, 
-                 requests_per_minute: int = 50):
+
+    def __init__(self, client_id: str, client_secret: str, user_agent: str, requests_per_minute: int = 50):
         """
         Initialize Reddit API wrapper
-        
+
         Args:
             client_id: Reddit app client ID
-            client_secret: Reddit app client secret  
+            client_secret: Reddit app client secret
             user_agent: User agent string (e.g., "MyBot/1.0 by u/username")
             requests_per_minute: Custom rate limit (default 50 to be safe)
         """
-        self.reddit = praw.Reddit(
-            client_id=client_id,
-            client_secret=client_secret,
-            user_agent=user_agent
-        )
-        
+        self.reddit = praw.Reddit(client_id=client_id, client_secret=client_secret, user_agent=user_agent)
+
         # Rate limiting
         self.min_delay = 60.0 / requests_per_minute  # Minimum delay between requests
         self.last_request_time = 0
-        
+
     def _rate_limit(self):
         """Enforce rate limiting between requests"""
         current_time = time.time()
         time_since_last = current_time - self.last_request_time
-        
+
         if time_since_last < self.min_delay:
             sleep_time = self.min_delay - time_since_last
             print(f"Rate limiting: sleeping for {sleep_time:.2f} seconds...")
             time.sleep(sleep_time)
-            
+
         self.last_request_time = time.time()
-        
-    def search_subreddit_threads(self, subreddit_name: str, query: str = "", 
-                               limit: int = 10, sort: str = "hot") -> List[Dict[str, Any]]:
+
+    def search_subreddit_threads(
+        self, subreddit_name: str, query: str = "", limit: int = 10, sort: str = "hot"
+    ) -> List[Dict[str, Any]]:
         """
         Search for threads in a specific subreddit
-        
+
         Args:
             subreddit_name: Name of the subreddit (without r/)
             query: Search query (empty string gets all posts)
             limit: Number of threads to retrieve
             sort: Sort method ("hot", "new", "top", "rising")
-            
+
         Returns:
             List of thread dictionaries with relevant information
         """
         self._rate_limit()
-        
+
         try:
             subreddit = self.reddit.subreddit(subreddit_name)
-            
+
             # Get submissions based on sort method
             if query:
                 submissions = subreddit.search(query, limit=limit)
@@ -74,169 +71,187 @@ class RedditWrapper:
                     submissions = subreddit.rising(limit=limit)
                 else:
                     submissions = subreddit.hot(limit=limit)
-            
+
             threads = []
             for submission in submissions:
                 # Rate limit each submission fetch
                 if len(threads) > 0:  # Don't rate limit the first one
                     self._rate_limit()
-                    
+
                 thread_data = {
-                    'id': submission.id,
-                    'title': submission.title,
-                    'author': str(submission.author) if submission.author else '[deleted]',
-                    'score': submission.score,
-                    'upvote_ratio': submission.upvote_ratio,
-                    'num_comments': submission.num_comments,
-                    'created_utc': submission.created_utc,
-                    'url': submission.url,
-                    'permalink': f"https://reddit.com{submission.permalink}",
-                    'selftext': submission.selftext,
-                    'is_self': submission.is_self,
-                    'subreddit': submission.subreddit.display_name,
-                    'flair': submission.link_flair_text
+                    "id": submission.id,
+                    "title": submission.title,
+                    "author": str(submission.author) if submission.author else "[deleted]",
+                    "score": submission.score,
+                    "upvote_ratio": submission.upvote_ratio,
+                    "num_comments": submission.num_comments,
+                    "created_utc": submission.created_utc,
+                    "url": submission.url,
+                    "permalink": f"https://reddit.com{submission.permalink}",
+                    "selftext": submission.selftext,
+                    "is_self": submission.is_self,
+                    "subreddit": submission.subreddit.display_name,
+                    "flair": submission.link_flair_text,
                 }
                 threads.append(thread_data)
-                
+
             return threads
-            
+
         except Exception as e:
             print(f"Error searching subreddit {subreddit_name}: {e}")
             return []
-    
+
     def get_thread_comments(self, thread_id: str, sort: str = "best") -> List[Dict[str, Any]]:
         """
         Get ALL comments from a specific thread with proper rate limiting
-        
+
         Args:
             thread_id: Reddit thread ID (without prefix)
             sort: Comment sort method ("best", "top", "new", "controversial", "old", "qa")
-            
+
         Returns:
             List of all comments in the thread (flattened structure)
         """
         self._rate_limit()
-        
+
         try:
             submission = self.reddit.submission(id=thread_id)
-            
+
             # Set comment sort
             submission.comment_sort = sort
-            
+
             print(f"Fetching ALL comments for thread {thread_id}...")
             print("This may take a while for threads with many comments...")
-            
+
             # Replace "MoreComments" objects to get ALL comments
             # This can make multiple API calls, so we need to be patient
             submission.comments.replace_more(limit=None)
-            
+
             comments = []
-            
+
             def extract_comment(comment, parent_id=None, depth=0):
                 """Recursively extract comment data"""
-                if hasattr(comment, 'body'):  # It's a real comment
+                if hasattr(comment, "body"):  # It's a real comment
                     comment_data = {
-                        'id': comment.id,
-                        'author': str(comment.author) if comment.author else '[deleted]',
-                        'body': comment.body,
-                        'score': comment.score,
-                        'created_utc': comment.created_utc,
-                        'parent_id': parent_id,
-                        'depth': depth,
-                        'permalink': f"https://reddit.com{comment.permalink}",
-                        'is_submitter': comment.is_submitter,
-                        'edited': bool(comment.edited),
-                        'gilded': comment.gilded,
-                        'controversiality': comment.controversiality
+                        "id": comment.id,
+                        "author": str(comment.author) if comment.author else "[deleted]",
+                        "body": comment.body,
+                        "score": comment.score,
+                        "created_utc": comment.created_utc,
+                        "parent_id": parent_id,
+                        "depth": depth,
+                        "permalink": f"https://reddit.com{comment.permalink}",
+                        "is_submitter": comment.is_submitter,
+                        "edited": bool(comment.edited),
+                        "gilded": comment.gilded,
+                        "controversiality": comment.controversiality,
                     }
                     comments.append(comment_data)
-                    
+
                     # Process replies
                     for reply in comment.replies:
                         extract_comment(reply, comment.id, depth + 1)
-            
+
             # Process all top-level comments
             for comment in submission.comments:
                 extract_comment(comment)
-            
+
             print(f"Successfully fetched {len(comments)} comments")
             return comments
-            
+
         except Exception as e:
             print(f"Error getting comments for thread {thread_id}: {e}")
             return []
-    
-    def get_user_content(self, username: str, content_type: str = "both", 
-                        limit: int = 100) -> Dict[str, List[Dict[str, Any]]]:
+
+    def get_user_content(
+        self, username: str, content_type: str = "both", limit: int = 100
+    ) -> Dict[str, List[Dict[str, Any]]]:
         """
         Get comments and/or submissions from a specific user
-        
+
         Args:
             username: Reddit username (without u/)
             content_type: "comments", "submissions", or "both"
             limit: Maximum number of items to retrieve per type
-            
+
         Returns:
             Dictionary with 'comments' and/or 'submissions' keys
         """
         self._rate_limit()
-        
+
         try:
             user = self.reddit.redditor(username)
             result = {}
-            
+
             if content_type in ["comments", "both"]:
                 comments = []
                 print(f"Fetching up to {limit} comments from u/{username}...")
-                
+
                 for i, comment in enumerate(user.comments.new(limit=limit)):
                     if i > 0 and i % 10 == 0:  # Rate limit every 10 comments
                         self._rate_limit()
-                        
+
                     comment_data = {
-                        'id': comment.id,
-                        'body': comment.body,
-                        'score': comment.score,
-                        'created_utc': comment.created_utc,
-                        'subreddit': comment.subreddit.display_name,
-                        'permalink': f"https://reddit.com{comment.permalink}",
-                        'parent_id': comment.parent_id,
-                        'is_submitter': comment.is_submitter,
-                        'edited': bool(comment.edited)
+                        "id": comment.id,
+                        "body": comment.body,
+                        "score": comment.score,
+                        "created_utc": comment.created_utc,
+                        "subreddit": comment.subreddit.display_name,
+                        "permalink": f"https://reddit.com{comment.permalink}",
+                        "parent_id": comment.parent_id,
+                        "is_submitter": comment.is_submitter,
+                        "edited": bool(comment.edited),
                     }
                     comments.append(comment_data)
-                result['comments'] = comments
+                result["comments"] = comments
                 print(f"Found {len(comments)} comments")
-            
+
             if content_type in ["submissions", "both"]:
                 submissions = []
                 print(f"Fetching up to {limit} submissions from u/{username}...")
-                
+
                 for i, submission in enumerate(user.submissions.new(limit=limit)):
                     if i > 0 and i % 10 == 0:  # Rate limit every 10 submissions
                         self._rate_limit()
-                        
+
                     submission_data = {
-                        'id': submission.id,
-                        'title': submission.title,
-                        'score': submission.score,
-                        'upvote_ratio': submission.upvote_ratio,
-                        'num_comments': submission.num_comments,
-                        'created_utc': submission.created_utc,
-                        'url': submission.url,
-                        'permalink': f"https://reddit.com{submission.permalink}",
-                        'selftext': submission.selftext,
-                        'subreddit': submission.subreddit.display_name,
-                        'is_self': submission.is_self,
-                        'flair': submission.link_flair_text
+                        "id": submission.id,
+                        "title": submission.title,
+                        "score": submission.score,
+                        "upvote_ratio": submission.upvote_ratio,
+                        "num_comments": submission.num_comments,
+                        "created_utc": submission.created_utc,
+                        "url": submission.url,
+                        "permalink": f"https://reddit.com{submission.permalink}",
+                        "selftext": submission.selftext,
+                        "subreddit": submission.subreddit.display_name,
+                        "is_self": submission.is_self,
+                        "flair": submission.link_flair_text,
                     }
                     submissions.append(submission_data)
-                result['submissions'] = submissions
+                result["submissions"] = submissions
                 print(f"Found {len(submissions)} submissions")
-                
+
             return result
-            
+
         except Exception as e:
             print(f"Error getting content for user {username}: {e}")
             return {}
 
+
+def _load_secrets() -> Dict[str, str]:
+    """
+    Load Reddit API credentials from a secrets file.
+    """
+    json_file = "secret.json"
+    with open(json_file, "r") as f:
+        secrets = json.load(f)
+    return secrets
+
+
+def create_wrapper():
+    secrets = _load_secrets()
+    return RedditWrapper(
+        client_id=secrets["client_id"],
+        client_secret=secrets["client_secret"],
+    )
