@@ -249,9 +249,10 @@ def _load_secrets() -> Dict[str, str]:
     return secrets
 
 
-def create_wrapper():
+def create_wrapper(user_agent: str = "my_reddit_app"):
     secrets = _load_secrets()
     return RedditWrapper(
         client_id=secrets["client_id"],
         client_secret=secrets["client_secret"],
+        user_agent=user_agent
     )
