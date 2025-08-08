@@ -241,7 +241,7 @@ Be concise and objective. Focus on the actual content and tone."""
             )
     
     def analyze_comments_batch(self, comments: List[Dict[str, Any]], 
-                             batch_delay: float = 1.0) -> List[CommentAnalysis]:
+                             batch_delay: float | None = None) -> List[CommentAnalysis]:
         """
         Analyze multiple comments with progress tracking
         
@@ -271,7 +271,7 @@ Be concise and objective. Focus on the actual content and tone."""
                 print(f"Progress: {i}/{total} ({i/total*100:.1f}%)")
             
             # Delay to prevent overwhelming the system
-            if i < total:
+            if batch_delay is not None and i < total:
                 time.sleep(batch_delay)
         
         print(f"✓ Analysis complete! Processed {len(results)} comments")

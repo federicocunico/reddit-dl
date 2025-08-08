@@ -79,7 +79,7 @@ def analyze_data_from_subreddit(thread_data: dict):
 if __name__ == "__main__":
     
     # Scrape a new one
-    data = get_data_from_subreddit("psicologia", 10)
+    # data = get_data_from_subreddit("psicologia", 10)
 
     # Load an old one
     files = sorted(glob("data/*.json"))
