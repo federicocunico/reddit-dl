@@ -1,6 +1,6 @@
 import requests
 import json
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import time
 from dataclasses import dataclass
 import pandas as pd

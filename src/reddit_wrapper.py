@@ -1,3 +1,4 @@
+import os
 import praw
 from typing import List, Dict, Any
 import time
@@ -243,9 +244,25 @@ def _load_secrets() -> Dict[str, str]:
     """
     Load Reddit API credentials from a secrets file.
     """
+    user_id = os.environ.get("REDDIT_API_USER_ID", None)
+    secret = os.environ.get("REDDIT_API_SECRET", None)
+    if user_id is not None and secret is not None:
+        return {"client_id": user_id, "client_secret": secret}
+    else:
+        print("[Warning]: Only one of REDDIT_API_USER_ID or REDDIT_API_SECRET is set. Both must be set to use environment variables. Trying with secret.json file...")
+
     json_file = "secret.json"
+    if not os.path.isfile(json_file):
+        raise FileNotFoundError(f"Secrets file '{json_file}' not found. Please create it with your Reddit API credentials.")
     with open(json_file, "r") as f:
         secrets = json.load(f)
+    # sanity check
+    if "client_id" not in secrets or "client_secret" not in secrets:
+        raise KeyError(f"Secrets file '{json_file}' must contain 'client_id' and 'client_secret' keys.")
+    if not secrets["client_id"] or not secrets["client_secret"]:
+        raise ValueError(f"'client_id' and 'client_secret' in '{json_file}' cannot be empty.")
+    if secrets["client_id"] == "YOUR_CLIENT_ID" or secrets["client_secret"] == "YOUR_CLIENT_SECRET":
+        raise ValueError(f"'client_id' and 'client_secret' in '{json_file}' must be set to your actual Reddit API credentials, not the placeholder values.")
     return secrets
 
 

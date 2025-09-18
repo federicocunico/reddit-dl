@@ -7,3 +7,8 @@ __pycache__/
 
 secret.json
 data/
+
+*.egg-info/
+dist/
+build/
+.eggs/
