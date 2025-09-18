@@ -1,8 +1,9 @@
 import os
 import praw
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import time
 import json
+from datetime import datetime
 
 
 class RedditWrapper:
@@ -243,17 +244,19 @@ class RedditWrapper:
         self, 
         subreddit_name: str, 
         min_upvotes: int = 100,
-        time_filter: str = "day",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
         max_posts: int = 1000,
         sort: str = "hot"
     ) -> List[Dict[str, Any]]:
         """
-        Get hot topics from a subreddit with upvote and time filtering, handling pagination
+        Get hot topics from a subreddit with upvote and date filtering, handling pagination
         
         Args:
             subreddit_name: Name of the subreddit (without r/)
             min_upvotes: Minimum number of upvotes required
-            time_filter: Time period filter ("hour", "day", "week", "month", "year", "all")
+            start_date: Start date in format "YYYY-MM-DD" (e.g., "2025-01-01"). If None, no start limit
+            end_date: End date in format "YYYY-MM-DD" (e.g., "2025-12-31"). If None, no end limit
             max_posts: Maximum number of posts to retrieve (handles pagination)
             sort: Sort method ("hot", "new", "top", "rising")
             
@@ -261,7 +264,33 @@ class RedditWrapper:
             List of filtered thread dictionaries
         """
         print(f"Fetching hot topics from r/{subreddit_name} with {min_upvotes}+ upvotes...")
-        print(f"Time filter: {time_filter}, Sort: {sort}, Max posts: {max_posts}")
+        
+        # Parse date filters
+        start_timestamp = None
+        end_timestamp = None
+        
+        if start_date:
+            try:
+                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                start_timestamp = start_dt.timestamp()
+                print(f"Start date: {start_date}")
+            except ValueError:
+                raise ValueError(f"Invalid start_date format. Use YYYY-MM-DD, got: {start_date}")
+        
+        if end_date:
+            try:
+                end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                # Set to end of day (23:59:59)
+                end_dt = end_dt.replace(hour=23, minute=59, second=59)
+                end_timestamp = end_dt.timestamp()
+                print(f"End date: {end_date}")
+            except ValueError:
+                raise ValueError(f"Invalid end_date format. Use YYYY-MM-DD, got: {end_date}")
+        
+        if start_timestamp and end_timestamp and start_timestamp > end_timestamp:
+            raise ValueError("start_date cannot be after end_date")
+        
+        print(f"Sort: {sort}, Max posts to scan: {max_posts}")
         
         self._rate_limit()
         
@@ -270,19 +299,38 @@ class RedditWrapper:
             all_posts = []
             fetched_count = 0
             
-            # Get submissions based on sort method with time filter
+            # Get submissions based on sort method
             if sort == "hot":
                 submissions = subreddit.hot(limit=None)  # Use None for unlimited pagination
             elif sort == "new":
                 submissions = subreddit.new(limit=None)
             elif sort == "top":
-                submissions = subreddit.top(time_filter=time_filter, limit=None)
+                # For top posts, we can use time filters to be more efficient
+                if start_timestamp and end_timestamp:
+                    # Calculate rough time filter for optimization
+                    now = time.time()
+                    days_ago = (now - start_timestamp) / 86400
+                    
+                    if days_ago <= 1:
+                        time_filter = "day"
+                    elif days_ago <= 7:
+                        time_filter = "week"
+                    elif days_ago <= 30:
+                        time_filter = "month"
+                    elif days_ago <= 365:
+                        time_filter = "year"
+                    else:
+                        time_filter = "all"
+                    
+                    submissions = subreddit.top(time_filter=time_filter, limit=None)
+                else:
+                    submissions = subreddit.top(time_filter="all", limit=None)
             elif sort == "rising":
                 submissions = subreddit.rising(limit=None)
             else:
                 submissions = subreddit.hot(limit=None)
             
-            print("Processing submissions with pagination...")
+            print("Processing submissions with pagination and date filtering...")
             
             for submission in submissions:
                 # Rate limit every 10 submissions to be respectful
@@ -291,36 +339,33 @@ class RedditWrapper:
                 
                 fetched_count += 1
                 
-                # Check if we've reached our limit
+                # Check if we've reached our scanning limit
                 if fetched_count > max_posts:
-                    print(f"Reached maximum posts limit ({max_posts})")
+                    print(f"Reached maximum posts scanning limit ({max_posts})")
                     break
+                
+                # Apply date filters first (most efficient)
+                post_timestamp = submission.created_utc
+                
+                # Check if post is within date range
+                if start_timestamp and post_timestamp < start_timestamp:
+                    # For 'new' sort, if we hit posts older than start_date, we can break
+                    if sort == "new":
+                        print(f"Breaking early: reached posts older than start_date")
+                        break
+                    continue
+                
+                if end_timestamp and post_timestamp > end_timestamp:
+                    continue
                 
                 # Apply upvote filter
                 if submission.score < min_upvotes:
-                    # For 'hot' and 'new', if we're getting posts with low scores,
-                    # we might want to continue as scores can vary
-                    # For 'top', we can break early as they're sorted by score
+                    # For 'top' sort, if we're getting posts with low scores,
+                    # we can break early as they're sorted by score
                     if sort == "top":
                         print(f"Breaking early: post score {submission.score} below minimum {min_upvotes}")
                         break
                     else:
-                        continue
-                
-                # Apply time filter for non-top sorts (top already handles this)
-                if sort != "top":
-                    post_age_days = (time.time() - submission.created_utc) / 86400
-                    
-                    time_limits = {
-                        "hour": 1/24,
-                        "day": 1,
-                        "week": 7,
-                        "month": 30,
-                        "year": 365,
-                        "all": float('inf')
-                    }
-                    
-                    if post_age_days > time_limits.get(time_filter, 1):
                         continue
                 
                 thread_data = {
@@ -354,7 +399,11 @@ class RedditWrapper:
             all_posts.sort(key=lambda x: x['score'], reverse=True)
             
             print(f"✓ Found {len(all_posts)} hot topics with {min_upvotes}+ upvotes")
-            print(f"  Top post: {all_posts[0]['score']} upvotes" if all_posts else "  No posts found")
+            if all_posts:
+                print(f"  Top post: {all_posts[0]['score']} upvotes - '{all_posts[0]['title'][:60]}...'")
+                print(f"  Date range in results: {all_posts[-1]['created_date']} to {all_posts[0]['created_date']}")
+            else:
+                print("  No posts found matching criteria")
             
             return all_posts
             
@@ -366,7 +415,8 @@ class RedditWrapper:
         self, 
         subreddit_names: List[str], 
         min_upvotes: int = 100,
-        time_filter: str = "day",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
         max_posts_per_sub: int = 100
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
@@ -375,7 +425,8 @@ class RedditWrapper:
         Args:
             subreddit_names: List of subreddit names (without r/)
             min_upvotes: Minimum number of upvotes required
-            time_filter: Time period filter ("hour", "day", "week", "month", "year", "all")
+            start_date: Start date in format "YYYY-MM-DD" (e.g., "2025-01-01"). If None, no start limit
+            end_date: End date in format "YYYY-MM-DD" (e.g., "2025-12-31"). If None, no end limit
             max_posts_per_sub: Maximum number of posts per subreddit
             
         Returns:
@@ -384,6 +435,8 @@ class RedditWrapper:
         results = {}
         
         print(f"Processing {len(subreddit_names)} subreddits...")
+        if start_date or end_date:
+            print(f"Date range: {start_date or 'earliest'} to {end_date or 'latest'}")
         
         for i, subreddit_name in enumerate(subreddit_names, 1):
             print(f"\n[{i}/{len(subreddit_names)}] Processing r/{subreddit_name}...")
@@ -391,7 +444,8 @@ class RedditWrapper:
             posts = self.get_hot_topics_with_filters(
                 subreddit_name=subreddit_name,
                 min_upvotes=min_upvotes,
-                time_filter=time_filter,
+                start_date=start_date,
+                end_date=end_date,
                 max_posts=max_posts_per_sub,
                 sort="hot"
             )
