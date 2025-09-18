@@ -246,6 +246,7 @@ class RedditWrapper:
         min_upvotes: int = 100,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        filter: str = "year",
         max_posts: int = 1000,
         sort: str = "top"
     ) -> List[Dict[str, Any]]:
@@ -291,7 +292,8 @@ class RedditWrapper:
             raise ValueError("start_date cannot be after end_date")
         
         # Determine the most efficient Reddit time filter
-        reddit_time_filter = self._get_optimal_time_filter(start_timestamp, end_timestamp)
+        # reddit_time_filter = self._get_optimal_time_filter(start_timestamp, end_timestamp)
+        reddit_time_filter = filter
         
         print(f"Sort: {sort}, Reddit time filter: {reddit_time_filter}, Max posts to scan: {max_posts}")
         
@@ -337,6 +339,7 @@ class RedditWrapper:
                 
                 # Apply date filters first (most efficient)
                 post_timestamp = submission.created_utc
+                post_dt = datetime.fromtimestamp(post_timestamp)  # for logging if needed
                 post_in_range = True
                 
                 # Check if post is within date range
