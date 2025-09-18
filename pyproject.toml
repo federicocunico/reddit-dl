@@ -10,10 +10,11 @@ authors = [
     {name = "federicocunico",email = "federico@cunico.net"}
 ]
 readme = "README.md"
-requires-python = "~=3.8"
+requires-python = ">=3.8"
 dependencies = [
     "praw (>=7.8.1,<8.0.0)"
 ]
 
 [tool.setuptools]
-packages = ["src"]
+package-dir = {"" = "src"}
+packages = ["reddit_dl"]
