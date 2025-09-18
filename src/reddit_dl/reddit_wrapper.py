@@ -239,6 +239,174 @@ class RedditWrapper:
             print(f"Error getting content for user {username}: {e}")
             return {}
 
+    def get_hot_topics_with_filters(
+        self, 
+        subreddit_name: str, 
+        min_upvotes: int = 100,
+        time_filter: str = "day",
+        max_posts: int = 1000,
+        sort: str = "hot"
+    ) -> List[Dict[str, Any]]:
+        """
+        Get hot topics from a subreddit with upvote and time filtering, handling pagination
+        
+        Args:
+            subreddit_name: Name of the subreddit (without r/)
+            min_upvotes: Minimum number of upvotes required
+            time_filter: Time period filter ("hour", "day", "week", "month", "year", "all")
+            max_posts: Maximum number of posts to retrieve (handles pagination)
+            sort: Sort method ("hot", "new", "top", "rising")
+            
+        Returns:
+            List of filtered thread dictionaries
+        """
+        print(f"Fetching hot topics from r/{subreddit_name} with {min_upvotes}+ upvotes...")
+        print(f"Time filter: {time_filter}, Sort: {sort}, Max posts: {max_posts}")
+        
+        self._rate_limit()
+        
+        try:
+            subreddit = self.reddit.subreddit(subreddit_name)
+            all_posts = []
+            fetched_count = 0
+            
+            # Get submissions based on sort method with time filter
+            if sort == "hot":
+                submissions = subreddit.hot(limit=None)  # Use None for unlimited pagination
+            elif sort == "new":
+                submissions = subreddit.new(limit=None)
+            elif sort == "top":
+                submissions = subreddit.top(time_filter=time_filter, limit=None)
+            elif sort == "rising":
+                submissions = subreddit.rising(limit=None)
+            else:
+                submissions = subreddit.hot(limit=None)
+            
+            print("Processing submissions with pagination...")
+            
+            for submission in submissions:
+                # Rate limit every 10 submissions to be respectful
+                if fetched_count > 0 and fetched_count % 10 == 0:
+                    self._rate_limit()
+                
+                fetched_count += 1
+                
+                # Check if we've reached our limit
+                if fetched_count > max_posts:
+                    print(f"Reached maximum posts limit ({max_posts})")
+                    break
+                
+                # Apply upvote filter
+                if submission.score < min_upvotes:
+                    # For 'hot' and 'new', if we're getting posts with low scores,
+                    # we might want to continue as scores can vary
+                    # For 'top', we can break early as they're sorted by score
+                    if sort == "top":
+                        print(f"Breaking early: post score {submission.score} below minimum {min_upvotes}")
+                        break
+                    else:
+                        continue
+                
+                # Apply time filter for non-top sorts (top already handles this)
+                if sort != "top":
+                    post_age_days = (time.time() - submission.created_utc) / 86400
+                    
+                    time_limits = {
+                        "hour": 1/24,
+                        "day": 1,
+                        "week": 7,
+                        "month": 30,
+                        "year": 365,
+                        "all": float('inf')
+                    }
+                    
+                    if post_age_days > time_limits.get(time_filter, 1):
+                        continue
+                
+                thread_data = {
+                    "id": submission.id,
+                    "title": submission.title,
+                    "author": str(submission.author) if submission.author else "[deleted]",
+                    "score": submission.score,
+                    "upvote_ratio": submission.upvote_ratio,
+                    "num_comments": submission.num_comments,
+                    "created_utc": submission.created_utc,
+                    "created_date": time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(submission.created_utc)),
+                    "url": submission.url,
+                    "permalink": f"https://reddit.com{submission.permalink}",
+                    "selftext": submission.selftext,
+                    "is_self": submission.is_self,
+                    "subreddit": submission.subreddit.display_name,
+                    "flair": submission.link_flair_text,
+                    "domain": submission.domain,
+                    "gilded": submission.gilded,
+                    "over_18": submission.over_18,
+                    "spoiler": submission.spoiler,
+                    "stickied": submission.stickied,
+                }
+                all_posts.append(thread_data)
+                
+                # Progress update
+                if len(all_posts) % 50 == 0:
+                    print(f"Found {len(all_posts)} qualifying posts so far...")
+            
+            # Sort by score descending for final results
+            all_posts.sort(key=lambda x: x['score'], reverse=True)
+            
+            print(f"✓ Found {len(all_posts)} hot topics with {min_upvotes}+ upvotes")
+            print(f"  Top post: {all_posts[0]['score']} upvotes" if all_posts else "  No posts found")
+            
+            return all_posts
+            
+        except Exception as e:
+            print(f"Error getting hot topics from r/{subreddit_name}: {e}")
+            return []
+
+    def get_trending_topics_batch(
+        self, 
+        subreddit_names: List[str], 
+        min_upvotes: int = 100,
+        time_filter: str = "day",
+        max_posts_per_sub: int = 100
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Get trending topics from multiple subreddits with batch processing
+        
+        Args:
+            subreddit_names: List of subreddit names (without r/)
+            min_upvotes: Minimum number of upvotes required
+            time_filter: Time period filter ("hour", "day", "week", "month", "year", "all")
+            max_posts_per_sub: Maximum number of posts per subreddit
+            
+        Returns:
+            Dictionary with subreddit names as keys and lists of posts as values
+        """
+        results = {}
+        
+        print(f"Processing {len(subreddit_names)} subreddits...")
+        
+        for i, subreddit_name in enumerate(subreddit_names, 1):
+            print(f"\n[{i}/{len(subreddit_names)}] Processing r/{subreddit_name}...")
+            
+            posts = self.get_hot_topics_with_filters(
+                subreddit_name=subreddit_name,
+                min_upvotes=min_upvotes,
+                time_filter=time_filter,
+                max_posts=max_posts_per_sub,
+                sort="hot"
+            )
+            
+            results[subreddit_name] = posts
+            
+            # Rate limit between subreddits
+            if i < len(subreddit_names):
+                self._rate_limit()
+        
+        total_posts = sum(len(posts) for posts in results.values())
+        print(f"\n✓ Batch processing complete! Found {total_posts} total posts across {len(subreddit_names)} subreddits")
+        
+        return results
+
 
 def _load_secrets() -> Dict[str, str]:
     """
